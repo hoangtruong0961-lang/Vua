@@ -36,8 +36,16 @@ export function useGameConfig(activeWorld: WorldData | null) {
         setSettings(s);
         const globals = s?.regex_scripts || [];
         const scopeds = activeWorldRef.current?.extensions?.regex_scripts || [];
+        const entityRegs: RegexScript[] = [];
+        if (activeWorldRef.current?.entities) {
+          activeWorldRef.current.entities.forEach((ent) => {
+            if (ent.extensions?.regex_scripts && Array.isArray(ent.extensions.regex_scripts)) {
+              entityRegs.push(...ent.extensions.regex_scripts);
+            }
+          });
+        }
         const presets = tawaPresetConfigRef.current?.regexScripts || activeWorldRef.current?.config?.regexScripts || [];
-        setCombinedRegexScripts([...globals, ...scopeds, ...presets]);
+        setCombinedRegexScripts([...globals, ...scopeds, ...entityRegs, ...presets]);
     } catch (e) {
         console.error("Failed to load regex scripts", e);
     }

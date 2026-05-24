@@ -58,49 +58,53 @@ const DEFAULT_AI_SETTINGS = {
 function normalizePresetConfig(config: TawaPresetConfig) {
   if (!config.modules) config.modules = [];
 
-  // 1. Locate primary modules strictly by SillyTavern standard identifiers first
+  // Find modules by ST standard identifier
   let mainMod = config.modules.find(m => m.identifier === "main");
   if (!mainMod) {
     mainMod = config.modules.find(m => m.name?.toLowerCase().includes("main system") || m.name?.toLowerCase().includes("hệ thống chính"));
   }
 
-  // NSFW in ST is used as the "Auxiliary Prompt" slot, often repurposed for writing guidelines
   let nsfwMod = config.modules.find(m => m.identifier === "nsfw");
   if (!nsfwMod) {
     nsfwMod = config.modules.find(m => m.name?.toLowerCase().includes("auxiliary") || m.name?.toLowerCase().includes("phụ") || m.name?.toLowerCase().includes("nsfw") || m.name?.toLowerCase().includes("secondary"));
   }
 
-  // Jailbreak in ST is used as the "Jailbreak Prompt / Post-History Prompt" slot
-  let phMod = config.modules.find(m => m.identifier === "jailbreak" || m.identifier === "jailbreak_prompt" || m.identifier === "post_history_instructions" || m.identifier === "post_history" || m.identifier === "post-history");
-  if (!phMod) {
-    phMod = config.modules.find(m => m.name?.toLowerCase().includes("post-history") || m.name?.toLowerCase().includes("post_history") || m.name?.toLowerCase().includes("ôn lại") || m.name?.toLowerCase().includes("lược sử") || m.name?.toLowerCase().includes("vượt ngục") || m.name?.toLowerCase().includes("kết thúc ôn lại") || m.name?.toLowerCase().includes("———❉———"));
+  let jbMod = config.modules.find(m => m.identifier === "jailbreak" || m.identifier === "jailbreak_prompt");
+  if (!jbMod) {
+    jbMod = config.modules.find(m => m.name?.toLowerCase().includes("vượt ngục") || m.name?.toLowerCase().includes("jailbreak"));
   }
 
-  // 2. Unify their identifiers if they exist under alternative names to standard SillyTavern keys
+  let phMod = config.modules.find(m => m.identifier === "post_history_instructions" || m.identifier === "post_history" || m.identifier === "post-history");
+  if (!phMod) {
+    phMod = config.modules.find(m => m.name?.toLowerCase().includes("post-history") || m.name?.toLowerCase().includes("post_history") || m.name?.toLowerCase().includes("ôn lại") || m.name?.toLowerCase().includes("lược sử") || m.name?.toLowerCase().includes("kết thúc ôn lại") || m.name?.toLowerCase().includes("———❉———"));
+    // Ensure we don't pick the same module for jailbreak and post-history if only one of them exists using names!
+    if (phMod && jbMod && phMod.identifier === jbMod.identifier) {
+      phMod = undefined;
+    }
+  }
+
+  // Map / unify identifiers
   if (mainMod && mainMod.identifier !== "main") {
     mainMod.identifier = "main";
   }
   if (nsfwMod && nsfwMod.identifier !== "nsfw") {
     nsfwMod.identifier = "nsfw";
   }
-  if (phMod && phMod.identifier !== "jailbreak" && phMod.identifier !== "post_history_instructions") {
-    phMod.identifier = "jailbreak"; // Standardize on 'jailbreak' for perfect ST compatibility
+  if (jbMod && jbMod.identifier !== "jailbreak") {
+    jbMod.identifier = "jailbreak";
+  }
+  if (phMod && phMod.identifier !== "post_history_instructions") {
+    phMod.identifier = "post_history_instructions";
   }
 
-  // 3. Synchronize config values
+  // Sync config values
   config.main_prompt = config.main_prompt || mainMod?.content || "";
   config.nsfw_prompt = config.nsfw_prompt || nsfwMod?.content || "";
-  
-  if (phMod) {
-    config.post_history_instructions = config.post_history_instructions || phMod.content || "";
-    config.jailbreak_prompt = config.jailbreak_prompt || phMod.content || "";
-  } else {
-    config.post_history_instructions = config.post_history_instructions || "";
-    config.jailbreak_prompt = config.jailbreak_prompt || "";
-  }
+  config.jailbreak_prompt = config.jailbreak_prompt || jbMod?.content || "";
+  config.post_history_instructions = config.post_history_instructions || phMod?.content || "";
 
-  // 4. Build guarantee modules (same as guaranteeModule but unified)
-  const guaranteeModule = (identifier: string, modName: string, role: "system" | "user" | "assistant", content: string, systemPrompt: boolean) => {
+  // Helper to construct a module if absent
+  const guaranteeModule = (identifier: string, modName: string, role: "system" | "user" | "assistant", content: string, systemPrompt: boolean, pos = 0) => {
     const exists = config.modules.some(m => m.identifier === identifier);
     if (!exists && content) {
       config.modules.push({
@@ -110,23 +114,24 @@ function normalizePresetConfig(config: TawaPresetConfig) {
         content,
         system_prompt: systemPrompt,
         enabled: true,
-        injection_position: 0,
-        injection_depth: 0,
+        injection_position: pos,
+        injection_depth: identifier === "nsfw" ? 4 : 0,
         injection_order: 100
       });
     }
   };
 
   if (config.main_prompt) {
-    guaranteeModule("main", "Princess Tawa (Main System)", "system", config.main_prompt, true);
+    guaranteeModule("main", "Princess Tawa (Main System)", "system", config.main_prompt, true, 0);
   }
   if (config.nsfw_prompt) {
-    guaranteeModule("nsfw", "Auxiliary Prompt (Quy phạm phụ / Thiết lập bổ trợ)", "system", config.nsfw_prompt, true);
+    guaranteeModule("nsfw", "Auxiliary Prompt (Quy phạm phụ / Thiết lập bổ trợ)", "system", config.nsfw_prompt, true, 0);
   }
-  if (config.jailbreak_prompt || config.post_history_instructions) {
-    const targetIdentifier = phMod?.identifier || "jailbreak";
-    const targetRole = phMod?.role || "assistant";
-    guaranteeModule(targetIdentifier, phMod?.name || "Jailbreak Prompt (Chỉ thị Vượt ngục / Ôn lại)", targetRole, config.jailbreak_prompt || config.post_history_instructions || "", true);
+  if (config.jailbreak_prompt) {
+    guaranteeModule("jailbreak", "Jailbreak Prompt (Chỉ thị Vượt ngục)", "assistant", config.jailbreak_prompt, false, 0);
+  }
+  if (config.post_history_instructions) {
+    guaranteeModule("post_history_instructions", "Post-History Instructions (Chỉ thị Ôn lại)", "system", config.post_history_instructions, true, 1);
   }
 }
 
@@ -257,26 +262,8 @@ export default function TawaPresetManager({
 
   const mainPromptValue = config.main_prompt || (config.modules?.find(m => m.identifier === "main")?.content || "");
   const nsfwPromptValue = config.nsfw_prompt || (config.modules?.find(m => m.identifier === "nsfw")?.content || "");
-  
-  // Custom combined post-history/jailbreak value
-  const getPostHistoryValue = () => {
-    // If post_history_instructions is set explicitly on config, use it
-    if (config.post_history_instructions !== undefined && config.post_history_instructions !== "") {
-      return config.post_history_instructions;
-    }
-    
-    // Find phMod with explicit post_history_instructions id
-    const phMod = config.modules?.find(m => m.identifier === "post_history_instructions" || m.identifier === "post_history");
-    if (phMod && phMod.content) return phMod.content;
-
-    // Fallback to "jailbreak" module which holds the close-tag in Gomorrah and similar presets
-    const jbMod = config.modules?.find(m => m.identifier === "jailbreak");
-    if (jbMod && jbMod.content) return jbMod.content;
-
-    return config.jailbreak_prompt || "";
-  };
-
-  const postHistoryInstructionsValue = getPostHistoryValue();
+  const jailbreakPromptValue = config.jailbreak_prompt || (config.modules?.find(m => m.identifier === "jailbreak")?.content || "");
+  const postHistoryInstructionsValue = config.post_history_instructions || (config.modules?.find(m => m.identifier === "post_history_instructions" || m.identifier === "post_history")?.content || "");
 
   useEffect(() => {
     if (activePreset) {
@@ -311,16 +298,17 @@ export default function TawaPresetManager({
   };
 
   // QUICK PROMPTS EDITING HANDLER
-  const handleQuickPromptChange = (field: "main" | "nsfw" | "post_history_instructions", value: string) => {
+  const handleQuickPromptChange = (field: "main" | "nsfw" | "jailbreak" | "post_history_instructions", value: string) => {
     updateConfig((prev) => {
       const updated = { ...prev };
       if (field === "main") {
         updated.main_prompt = value;
       } else if (field === "nsfw") {
         updated.nsfw_prompt = value;
+      } else if (field === "jailbreak") {
+        updated.jailbreak_prompt = value;
       } else if (field === "post_history_instructions") {
         updated.post_history_instructions = value;
-        updated.jailbreak_prompt = value; // keep both top level fields in sync for ST compatibility
       }
 
       // Also locate/update the corresponding PromptModule so it synchronizes correctly
@@ -338,23 +326,14 @@ export default function TawaPresetManager({
         targetIdentifier = "nsfw";
         defaultName = "Auxiliary Prompt (Quy phạm phụ / Thiết lập bổ trợ)";
         defaultRole = "system";
-      } else {
-        // For post_history_instructions, find if we already have "jailbreak" or "post_history_instructions"
-        const hasJb = modules.some(m => m.identifier === "jailbreak");
-        const hasPh = modules.some(m => m.identifier === "post_history_instructions" || m.identifier === "post_history");
-        
-        if (hasJb) {
-          targetIdentifier = "jailbreak";
-        } else if (hasPh) {
-          const phMod = modules.find(m => m.identifier === "post_history_instructions" || m.identifier === "post_history");
-          targetIdentifier = phMod?.identifier || "post_history_instructions";
-        } else {
-          // Default to jailbreak module since presets like Gomorrah use "jailbreak" module as post-history close tag
-          targetIdentifier = "jailbreak";
-        }
-        
-        defaultName = "Jailbreak Prompt (Chỉ thị Vượt ngục / Ôn lại)";
+      } else if (field === "jailbreak") {
+        targetIdentifier = "jailbreak";
+        defaultName = "Jailbreak Prompt (Chỉ thị Vượt ngục)";
         defaultRole = "assistant";
+      } else if (field === "post_history_instructions") {
+        targetIdentifier = "post_history_instructions";
+        defaultName = "Post-History Instructions (Chỉ thị Ôn lại cuối Lịch sử)";
+        defaultRole = "system";
       }
       
       const modIdx = modules.findIndex(m => m.identifier === targetIdentifier);
@@ -372,8 +351,8 @@ export default function TawaPresetManager({
           enabled: true,
           content: value,
           system_prompt: defaultRole === "system",
-          injection_position: 0,
-          injection_depth: targetIdentifier === "nsfw" ? 4 : 0,
+          injection_position: field === "post_history_instructions" ? 1 : 0,
+          injection_depth: field === "nsfw" ? 4 : 0,
           injection_order: 100
         });
       }
@@ -529,6 +508,15 @@ export default function TawaPresetManager({
         nsfw_prompt: config.nsfw_prompt || config.modules?.find(m => m.identifier === "nsfw")?.content || "",
         post_history_instructions: config.post_history_instructions || config.modules?.find(m => m.identifier === "post_history_instructions")?.content || "",
         prompts: config.modules,
+        prompt_order: [
+          {
+            character_id: 100001,
+            order: (config.modules || []).map(m => ({
+              identifier: m.identifier,
+              enabled: m.enabled ?? true
+            }))
+          }
+        ],
         regex_scripts: config.regexScripts || [],
       };
       const dataStr = JSON.stringify(exportObject, null, 2);
@@ -846,14 +834,30 @@ export default function TawaPresetManager({
                   <div className="flex flex-col gap-2 p-4 bg-slate-800/30 border border-slate-800 rounded-xl">
                     <div className="flex justify-between items-center mb-1">
                       <div>
-                        <h4 className="font-bold text-slate-300">3. Jailbreak Prompt (Chỉ thị Vượt ngục / Ôn lại cuối Lịch sử)</h4>
-                        <p className="text-xs text-slate-400">Được tiêm trực tiếp vào cuối lịch sử chat hoặc sau Lịch sử (Post-History, e.g. &quot;———❉———&quot; có identifier <strong>jailbreak</strong>), dùng để duy trì định dạng phản hồi.</p>
+                        <h4 className="font-bold text-slate-300">3. Jailbreak Prompt (Chỉ thị Vượt ngục / Phục hồi trạng thái)</h4>
+                        <p className="text-xs text-slate-400">Chỉ thị rũ bỏ rào cản hệ thống và thiết lập phong cách viết (Ví dụ: Định dạng phản hồi ngôi thứ nhất có identifier <strong>jailbreak</strong>), thường được kích hoạt trước phản hồi.</p>
+                      </div>
+                    </div>
+                    <textarea
+                      value={jailbreakPromptValue}
+                      onChange={(e) => handleQuickPromptChange("jailbreak", e.target.value)}
+                      placeholder="Nhập nội dung cho Jailbreak Prompt (Mặc định liên kết với identifier 'jailbreak')..."
+                      rows={10}
+                      className="bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-mystic-accent/50 font-mono resize-y min-h-[120px]"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2 p-4 bg-slate-800/30 border border-slate-800 rounded-xl">
+                    <div className="flex justify-between items-center mb-1">
+                      <div>
+                        <h4 className="font-bold text-slate-300">4. Post-History Instructions (Chỉ thị Ôn lại cuối Lịch sử)</h4>
+                        <p className="text-xs text-slate-400">Được tiêm trực tiếp vào sau Lịch sử (Post-History, e.g. &quot;———❉———&quot; hoặc nhắc lại bối cảnh có identifier <strong>post_history_instructions</strong>), dùng để duy trì bối cảnh và hướng dẫn phản hồi.</p>
                       </div>
                     </div>
                     <textarea
                       value={postHistoryInstructionsValue}
                       onChange={(e) => handleQuickPromptChange("post_history_instructions", e.target.value)}
-                      placeholder="Nhập nội dung cho Jailbreak Prompt (Mặc định liên kết với identifier 'jailbreak')..."
+                      placeholder="Nhập nội dung cho Post-History Instructions (Mặc định liên kết với identifier 'post_history_instructions')..."
                       rows={10}
                       className="bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-mystic-accent/50 font-mono resize-y min-h-[120px]"
                     />

@@ -1217,116 +1217,13 @@ export const useGameplayCore = ({
   }, [setIsInputCollapsed]);
 
   const handleSendRef = useRef<((text: string) => Promise<void>) | null>(null);
+  const executeWidgetActionRef = useRef<(action: string, payload: any) => void>(null as any);
 
   useEffect(() => {
     const handleWidgetAction = (e: any) => {
       const { action, payload } = e.detail;
-      if (!action) return;
-
-      switch (action) {
-        case "UPDATE_LSR":
-          // Assume payload is a parsed LSR object { "tableName": [ rowData ] } or partial
-          if (payload && typeof payload === "object") {
-            setLsrRuntimeData((prev) => {
-              // simple merge
-              const nextData = { ...prev };
-              for (const key in payload) {
-                if (Array.isArray(payload[key])) {
-                  nextData[key] = payload[key];
-                }
-              }
-              return nextData;
-            });
-          }
-          break;
-        case "OVERWRITE_LSR":
-          if (payload && typeof payload === "object") {
-            setLsrRuntimeData(payload);
-          }
-          break;
-        case "SEND_MESSAGE":
-          if (
-            typeof payload === "string" &&
-            payload.trim() &&
-            handleSendRef.current
-          ) {
-            handleSendRef.current(payload);
-          } else if (
-            payload &&
-            typeof payload.text === "string" &&
-            payload.text.trim() &&
-            handleSendRef.current
-          ) {
-            handleSendRef.current(payload.text);
-          }
-          break;
-        case "SEND_OPENING_DATA":
-        case "OPENING_DATA":
-        case "sendOpeningData":
-        case "send_opening_data":
-        case "openingData":
-        case "opening_data":
-          if (payload) {
-            (async () => {
-              let textVal = "";
-              let dataVal = null;
-              if (typeof payload === "string") {
-                textVal = payload;
-              } else if (payload && typeof payload === "object") {
-                textVal = payload.text || payload.message || payload.content || "";
-                dataVal = payload.data || payload.variables || payload.payload || null;
-              }
-              if (dataVal && typeof dataVal === "object") {
-                try {
-                  const setVarsFn = (window as any).setVariables || (window as any).parent?.setVariables;
-                  if (typeof setVarsFn === "function") {
-                    await setVarsFn(dataVal);
-                    console.log("[SillyTavern Bridge] Synced variables from widget SEND_OPENING_DATA action:", dataVal);
-                  }
-                } catch (e) {
-                  console.warn("[SillyTavern Bridge] Failed to update variables for SEND_OPENING_DATA widget action:", e);
-                }
-              }
-              if (textVal && typeof textVal === "string") {
-                console.log("[SillyTavern Bridge] Handling SEND_OPENING_DATA widget action content:", textVal);
-                if (handleSendRef.current) {
-                  handleSendRef.current(textVal);
-                } else {
-                  handleSend(textVal);
-                }
-              }
-            })();
-          }
-          break;
-        case "NAVIGATE":
-          if (payload && typeof payload === "string") {
-             onNavigate(payload as any);
-          }
-          break;
-        case "SHOW_MODAL":
-          if (payload === "character") setShowCharModal(true);
-          else if (payload === "history") setShowHistoryModal(true);
-          else if (payload === "regex") setShowRegexModal(true);
-          else if (payload === "context") setShowContextModal(true);
-          else if (payload === "library") setShowImageLibrary(true);
-          else if (payload === "console") setShowLogConsole(true);
-          break;
-        case "UPDATE_PERSONA":
-          if (payload && onUpdateWorld && activeWorldRef.current) {
-             onUpdateWorld({ player: { ...activeWorldRef.current.player, ...payload } });
-          }
-          break;
-        case "UPDATE_WORLDBOOK":
-        case "UPDATE_LOREBOOK":
-          if (payload) {
-             const wbName = payload.name || payload.worldbook || "Active Worldbook";
-             const wbData = payload.data || payload.entries || payload;
-             tavernHelper.updateWorldbookWith(wbName, wbData);
-          }
-          break;
-        case "TOAST":
-          toast(payload?.message || payload);
-          break;
+      if (action) {
+        executeWidgetActionRef.current?.(action, payload);
       }
     };
     window.addEventListener("tawa_widget_action", handleWidgetAction);
@@ -2512,13 +2409,28 @@ export const useGameplayCore = ({
           updateTokenHistory(estimatedTokens, result.text);
         }
 
-        // Apply Format AI Output regex (Placement 2) - Permanently (Destructive only)
+        // Apply Format AI Output regex (Placement 3 & Placement 2) - Permanently (Destructive only)
         let finalRegenText = result.text;
         const isDebugRegen =
           typeof window !== "undefined" &&
           (window as any).__TAWA_REGEX_DEBUG__ === true;
         const playerNameToUseRegen = activeWorld.player?.name || "User";
         if (combinedRegexScripts) {
+          // 1. Áp dụng các script Placement 3 (After AI Response - mặc định chỉnh sửa lưu trữ)
+          finalRegenText = getRegexedString(
+            finalRegenText,
+            3,
+            combinedRegexScripts,
+            {
+              userName: playerNameToUseRegen,
+              charName: "Character",
+              depth: 0,
+              isDebug: isDebugRegen,
+              isPrompt: false,
+              isMarkdown: false,
+            },
+          );
+          // 2. Áp dụng các script Placement 2 không đánh dấu là markdownOnly (chỉnh sửa lưu trữ)
           finalRegenText = getRegexedString(
             finalRegenText,
             2,
@@ -3012,9 +2924,25 @@ export const useGameplayCore = ({
       const playerNameToUse = activeWorldRef.current?.player?.name || "User";
       
       const applyRegex = (text: string) => {
+        let result = text;
         if (combinedRegexScriptsRef.current) {
-          return getRegexedString(
-            text,
+          // 1. Áp dụng các script Placement 3 (After AI Response - mặc định chỉnh sửa lưu trữ)
+          result = getRegexedString(
+            result,
+            3,
+            combinedRegexScriptsRef.current,
+            {
+              userName: playerNameToUse,
+              charName: "Character",
+              depth: 0,
+              isDebug: isDebugAI,
+              isPrompt: false,
+              isMarkdown: false,
+            },
+          );
+          // 2. Áp dụng các script Placement 2 không đánh dấu là markdownOnly (chỉnh sửa lưu trữ)
+          result = getRegexedString(
+            result,
             2,
             combinedRegexScriptsRef.current,
             {
@@ -3027,7 +2955,7 @@ export const useGameplayCore = ({
             },
           );
         }
-        return text;
+        return result;
       };
 
       finalResponseText = applyRegex(finalResponseText);
@@ -3478,6 +3406,23 @@ export const useGameplayCore = ({
           const messageDepth =
             newHistory.length > 0 ? newHistory.length - 1 - index : -1;
           const placement = msgToEdit.role === "user" ? 1 : 2;
+          if (placement === 2) {
+            // Apply Placement 3 edits
+            finalText = getRegexedString(
+              finalText,
+              3,
+              scriptsToRunOnEdit,
+              {
+                userName: currentPlayerName,
+                charName: "Character",
+                depth: messageDepth,
+                isDebug,
+                isEdit: true,
+                isPrompt: false,
+                isMarkdown: false,
+              },
+            );
+          }
           finalText = getRegexedString(
             finalText,
             placement,
@@ -3527,19 +3472,149 @@ export const useGameplayCore = ({
     [activeWorld?.entities],
   );
 
+  const executeWidgetAction = useCallback((action: string, payload: any) => {
+    if (!action) return;
+    const normAction = action.toUpperCase();
+
+    switch (normAction) {
+      case "UPDATE_LSR":
+        if (payload && typeof payload === "object") {
+          setLsrRuntimeData((prev) => {
+            const nextData = { ...prev };
+            for (const key in payload) {
+              if (Array.isArray(payload[key])) {
+                nextData[key] = payload[key];
+              }
+            }
+            return nextData;
+          });
+        }
+        break;
+      case "OVERWRITE_LSR":
+        if (payload && typeof payload === "object") {
+          setLsrRuntimeData(payload);
+        }
+        break;
+      case "SEND_MESSAGE":
+      case "SEND_INPUT":
+      case "SENDINPUT":
+      case "SENDREPLY":
+      case "SEND_REPLY":
+        if (
+          typeof payload === "string" &&
+          payload.trim() &&
+          handleSendRef.current
+        ) {
+          handleSendRef.current(payload);
+        } else if (
+          payload &&
+          typeof payload.text === "string" &&
+          payload.text.trim() &&
+          handleSendRef.current
+        ) {
+          handleSendRef.current(payload.text);
+        }
+        break;
+      case "SEND_OPENING_DATA":
+      case "OPENING_DATA":
+      case "SENDOPENINGDATA":
+      case "OPENINGDATA":
+        if (payload) {
+          (async () => {
+            let textVal = "";
+            let dataVal = null;
+            if (typeof payload === "string") {
+              textVal = payload;
+            } else if (payload && typeof payload === "object") {
+              textVal = payload.text || payload.message || payload.content || "";
+              dataVal = payload.data || payload.variables || payload.payload || null;
+            }
+            if (dataVal && typeof dataVal === "object") {
+              try {
+                const setVarsFn = (window as any).setVariables || (window as any).parent?.setVariables;
+                if (typeof setVarsFn === "function") {
+                  await setVarsFn(dataVal);
+                  console.log("[SillyTavern Bridge] Synced variables from widget SEND_OPENING_DATA action:", dataVal);
+                }
+              } catch (e) {
+                console.warn("[SillyTavern Bridge] Failed to update variables for SEND_OPENING_DATA widget action:", e);
+              }
+            }
+            if (textVal && typeof textVal === "string") {
+              console.log("[SillyTavern Bridge] Handling SEND_OPENING_DATA widget action content:", textVal);
+              if (handleSendRef.current) {
+                handleSendRef.current(textVal);
+              } else {
+                handleSend(textVal);
+              }
+            }
+          })();
+        }
+        break;
+      case "EDIT_LAST_MESSAGE":
+      case "EDITLASTMESSAGE":
+        if (payload && typeof payload === "string" && history.length > 0) {
+          const lastUserMsgIndex = [...history]
+            .reverse()
+            .findIndex((m) => m.role === "user");
+          if (lastUserMsgIndex !== -1) {
+            const realIndex = history.length - 1 - lastUserMsgIndex;
+            handleMessageUpdate(realIndex, payload);
+          }
+        } else if (payload && typeof payload.text === "string" && history.length > 0) {
+          const lastUserMsgIndex = [...history]
+            .reverse()
+            .findIndex((m) => m.role === "user");
+          if (lastUserMsgIndex !== -1) {
+            const realIndex = history.length - 1 - lastUserMsgIndex;
+            handleMessageUpdate(realIndex, payload.text);
+          }
+        }
+        break;
+      case "NAVIGATE":
+        if (payload && typeof payload === "string") {
+          onNavigate(payload as any);
+        }
+        break;
+      case "SHOW_MODAL": {
+        const pStr = String(payload).toLowerCase();
+        if (pStr === "character") setShowCharModal(true);
+        else if (pStr === "history") setShowHistoryModal(true);
+        else if (pStr === "regex") setShowRegexModal(true);
+        else if (pStr === "context") setShowContextModal(true);
+        else if (pStr === "library") setShowImageLibrary(true);
+        else if (pStr === "console") setShowLogConsole(true);
+        break;
+      }
+      case "UPDATE_PERSONA":
+        if (payload && onUpdateWorld && activeWorldRef.current) {
+          onUpdateWorld({ player: { ...activeWorldRef.current.player, ...payload } });
+        }
+        break;
+      case "UPDATE_WORLDBOOK":
+      case "UPDATE_LOREBOOK":
+        if (payload) {
+          const wbName = payload.name || payload.worldbook || "Active Worldbook";
+          const wbData = payload.data || payload.entries || payload;
+          tavernHelper.updateWorldbookWith(wbName, wbData);
+        }
+        break;
+      case "TOAST":
+        toast(payload?.message || payload);
+        break;
+    }
+  }, [onNavigate, setShowCharModal, setShowHistoryModal, setShowRegexModal, setShowContextModal, setShowImageLibrary, setShowLogConsole, onUpdateWorld, tavernHelper, handleSend, history, handleMessageUpdate]);
+
+  useEffect(() => {
+    executeWidgetActionRef.current = executeWidgetAction;
+  }, [executeWidgetAction]);
+
   // Handle messages from HTML widget iframes
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      // Security check: validate event origin (only current origin, sandboxed "null" origin, or white-listed widget message types/origins are allowed)
+      // Security check: validate event origin (only current origin, sandboxed "null" origin, or empty string are allowed)
       if (event.origin !== window.location.origin && event.origin !== "null" && event.origin !== "") {
-        const isLegitTawaMsg = event.data && (
-          event.data.type === "sendOpeningData" || 
-          event.data.type === "TAWA_WIDGET_ACTION" ||
-          event.data.type === "TAWA_WIDGET_LOG"
-        );
-        if (!isLegitTawaMsg) {
-          return;
-        }
+        return;
       }
       const data = event.data;
       if (data && typeof data === "object") {
@@ -3549,6 +3624,14 @@ export const useGameplayCore = ({
         const msgText = data.text || data.message || data.content || (typeof data.payload === 'string' ? data.payload : '');
 
         switch (type) {
+          case "TAWA_WIDGET_ACTION": {
+            const act = data.action;
+            const pay = data.payload || data.data;
+            if (act) {
+              executeWidgetActionRef.current?.(act, pay);
+            }
+            break;
+          }
           case "sendReply":
           case "send_input":
           case "sendInput":

@@ -1,5 +1,23 @@
 import { RegexScript } from '../types';
 
+export function safeUtf8ToBase64(str: string): string {
+  try {
+    const percentEncoded = encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) => {
+      return String.fromCharCode(parseInt(p1, 16));
+    });
+    return btoa(percentEncoded);
+  } catch (e) {
+    if (typeof Buffer !== 'undefined') {
+      return Buffer.from(str, 'utf-8').toString('base64');
+    }
+    try {
+      return btoa(unescape(encodeURIComponent(str)));
+    } catch {
+      return "";
+    }
+  }
+}
+
 export const LSR_REGEX = [
   {
       "name": "Hide TableEdit",
@@ -854,9 +872,7 @@ export function runRegexScript(
                 }
                 
                 try {
-                    const base64 = typeof btoa !== 'undefined' 
-                        ? btoa(unescape(encodeURIComponent(code)))
-                        : Buffer.from(code).toString('base64');
+                    const base64 = safeUtf8ToBase64(code);
                     // We output a Document Content sandbox for safety, leveraging MarkdownRenderer's component directly
                     return `<regex-widget data-content="${base64}"></regex-widget>`;
                 } catch(e) {
@@ -900,9 +916,12 @@ export function getRegexedString(
             if (!matchesPlacement && !(params.isEdit && script.runOnEdit)) return false;
         }
 
-        if (script.markdownOnly && !params.isMarkdown) return false;
-        if (script.promptOnly && !params.isPrompt) return false;
-        if (params.renderPhaseOnly && !script.markdownOnly) return false;
+        const markdownOnly = script.markdownOnly !== undefined ? script.markdownOnly : script.alterChatDisplay;
+        const promptOnly = script.promptOnly !== undefined ? script.promptOnly : script.alterOutgoingPrompt;
+
+        if (markdownOnly && !params.isMarkdown) return false;
+        if (promptOnly && !params.isPrompt) return false;
+        if (params.renderPhaseOnly && !markdownOnly) return false;
         if (params.isEdit && !script.runOnEdit) return false;
         
         if (typeof params.depth === 'number' && params.depth !== -1) {

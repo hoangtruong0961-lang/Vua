@@ -25,6 +25,72 @@ import { DynamicMemoryService } from "../memory/DynamicMemoryService";
 const MAX_HISTORY_CONTEXT = 100;
 const EMBEDDING_SCHEDULE_INTERVAL = 50;
 
+// Helper to inject in-chat segments at specific depths from end of history
+function injectInChatSegments(
+  mappedHistory: any[],
+  inChatSegments?: Array<{
+    content: string;
+    role: "system" | "user" | "assistant";
+    depth: number;
+    order: number;
+    identifier: string;
+  }>
+): any[] {
+  if (!inChatSegments || inChatSegments.length === 0) return mappedHistory;
+
+  const historyCopy = [...mappedHistory];
+
+  // Sort by depth descending (so higher depth is inserted closer to start)
+  const sortedSegments = [...inChatSegments].sort((a, b) => {
+    if (a.depth !== b.depth) {
+      return b.depth - a.depth;
+    }
+    return a.order - b.order;
+  });
+
+  for (const seg of sortedSegments) {
+    const roleToUse = seg.role === "assistant" ? "model" : "user";
+    const insertIdx = Math.max(0, historyCopy.length - seg.depth);
+    
+    // Insert injected segment
+    historyCopy.splice(insertIdx, 0, {
+      role: roleToUse,
+      parts: [{ text: seg.content }]
+    });
+  }
+
+  return historyCopy;
+}
+
+// Helper to normalize and strictly alternate consecutive roles to prevent Gemini errors
+function cleanAndAlternateContents(contents: any[]): any[] {
+  const getNormalizedRole = (role: string) => {
+    if (role === "assistant" || role === "model") return "model";
+    return "user";
+  };
+
+  const cleanedContents: any[] = [];
+  for (const msg of contents) {
+    if (!msg.parts || msg.parts.length === 0 || !msg.parts[0].text?.trim()) continue;
+    const msgRole = getNormalizedRole(msg.role);
+    
+    if (cleanedContents.length > 0 && cleanedContents[cleanedContents.length - 1].role === msgRole) {
+      cleanedContents[cleanedContents.length - 1].parts[0].text += "\n\n" + msg.parts[0].text;
+    } else {
+      cleanedContents.push({
+        role: msgRole,
+        parts: [{ text: msg.parts[0].text }]
+      });
+    }
+  }
+  return cleanedContents;
+}
+
+export const getAiModel = (settings: any): string => {
+  const activeProxy = settings?.proxies?.find((p: any) => p.id === settings.activeProxyId);
+  return activeProxy && activeProxy.model ? activeProxy.model : (settings?.aiModel || "gemini-2.1-pro-preview");
+};
+
 export const gameplayAiService = {
   // --- GAMEPLAY STORY GENERATION (With Tawa Protocol) ---
 
@@ -39,9 +105,19 @@ export const gameplayAiService = {
     try {
       const currentTurn = Math.floor(history.length / 2);
 
+      const entityRegexScripts: any[] = [];
+      if (worldData.entities) {
+        worldData.entities.forEach((ent) => {
+          if (ent.extensions?.regex_scripts && Array.isArray(ent.extensions.regex_scripts)) {
+            entityRegexScripts.push(...ent.extensions.regex_scripts);
+          }
+        });
+      }
+
       const combinedRegexScripts = [
         ...(settings.regex_scripts || []),
         ...(worldData.extensions?.regex_scripts || []),
+        ...entityRegexScripts,
         ...(worldData.config?.regexScripts || []),
       ];
 
@@ -304,7 +380,7 @@ export const gameplayAiService = {
         });
       }
 
-      const { systemPrompt, postHistoryUser, prefillAssistant, fewShotBlock } =
+      const { systemPrompt, postHistoryUser, prefillAssistant, fewShotBlock, inChatSegments } =
         buildGameplaySystemPrompt(
           worldData.world,
           worldData.player,
@@ -441,7 +517,10 @@ export const gameplayAiService = {
           parts: [{ text: text }],
         };
       });
-      contents.push(...mappedHistory);
+
+      // Giao thức Tawa: Inject in-chat history depth segments
+      const injectedHistory = injectInChatSegments(mappedHistory, inChatSegments);
+      contents.push(...injectedHistory);
 
       // INJECT REINFORCEMENT INSTRUCTION HERE (CONTEXT DRIFT FIX)
       const reinforcement = getReinforcementInstruction(currentTurn);
@@ -480,11 +559,14 @@ export const gameplayAiService = {
         });
       }
 
+      // Alternating validation pass on final contents to prevent Gemini errors
+      const fullyValidatedContents = cleanAndAlternateContents(contents);
+
       // 5. Call AI
 
       const response = await aiClient.models.generateContent({
         model: modelToUse,
-        contents: contents,
+        contents: fullyValidatedContents,
         config: {
           ...generationConfig,
           systemInstruction: systemPrompt,
@@ -713,9 +795,19 @@ export const gameplayAiService = {
         }
       };
 
+      const entityRegexScripts: any[] = [];
+      if (worldData.entities) {
+        worldData.entities.forEach((ent) => {
+          if (ent.extensions?.regex_scripts && Array.isArray(ent.extensions.regex_scripts)) {
+            entityRegexScripts.push(...ent.extensions.regex_scripts);
+          }
+        });
+      }
+
       const combinedRegexScripts = [
         ...(settings.regex_scripts || []),
         ...(worldData.extensions?.regex_scripts || []),
+        ...entityRegexScripts,
         ...(worldData.config?.regexScripts || []),
       ];
 
@@ -904,7 +996,7 @@ export const gameplayAiService = {
         });
       }
 
-      const { systemPrompt, postHistoryUser, prefillAssistant, fewShotBlock } =
+      const { systemPrompt, postHistoryUser, prefillAssistant, fewShotBlock, inChatSegments } =
         buildGameplaySystemPrompt(
           worldData.world,
           worldData.player,
@@ -1039,7 +1131,10 @@ export const gameplayAiService = {
           parts: [{ text: text }],
         };
       });
-      contents.push(...mappedHistory);
+
+      // Giao thức Tawa: Inject in-chat history depth segments
+      const injectedHistory = injectInChatSegments(mappedHistory, inChatSegments);
+      contents.push(...injectedHistory);
 
       // INJECT REINFORCEMENT INSTRUCTION HERE (CONTEXT DRIFT FIX)
       const reinforcement = getReinforcementInstruction(currentTurn);
@@ -1079,11 +1174,14 @@ export const gameplayAiService = {
         });
       }
 
+      // Alternating validation pass on final contents to prevent Gemini errors
+      const fullyValidatedContents = cleanAndAlternateContents(contents);
+
       const aiClient = getAiClient(settings);
 
       const streamResponse = await aiClient.models.generateContentStream({
         model: modelToUse,
-        contents: contents,
+        contents: fullyValidatedContents,
         config: {
           ...generationConfig,
           systemInstruction: systemPrompt,

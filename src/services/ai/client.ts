@@ -123,8 +123,9 @@ export const getAiClient = (settings?: AppSettings, forceDirect: boolean = false
   }
 
   if (!apiKey) {
-    apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || "";
-    source = process.env.API_KEY ? "AISTUDIO_SELECTED" : "SYSTEM_ENV";
+    const safeEnv = typeof process !== "undefined" ? process.env : {};
+    apiKey = safeEnv.API_KEY || safeEnv.GEMINI_API_KEY || "";
+    source = safeEnv.API_KEY ? "AISTUDIO_SELECTED" : "SYSTEM_ENV";
   }
 
   // --- OPENAI COMPATIBILITY WRAPPER ---
@@ -636,5 +637,5 @@ export const getAiClient = (settings?: AppSettings, forceDirect: boolean = false
 };
 
 // Default instance for backward compatibility (uses env key)
-const defaultKey = process.env.GEMINI_API_KEY || "no-key";
+const defaultKey = typeof process !== "undefined" ? (process.env.GEMINI_API_KEY || "no-key") : "no-key";
 export const ai = new GoogleGenAI({ apiKey: defaultKey });

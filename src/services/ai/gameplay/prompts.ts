@@ -423,6 +423,13 @@ ${playerProfileDetails}
   }
 
   const activeModules = [...presetConfig.modules];
+  const inChatSegments: Array<{
+    content: string;
+    role: "system" | "user" | "assistant";
+    depth: number;
+    order: number;
+    identifier: string;
+  }> = [];
 
   // --- BƯỚC 2: QUÉT MODULE & INJECTION (FIXED LOGIC) ---
 
@@ -486,6 +493,21 @@ ${playerProfileDetails}
     if (mod.injection_trigger && mod.injection_trigger.length > 0) {
       const isTriggered = mod.injection_trigger.some(trigger => checkTrigger(trigger, recentHistoryText));
       if (!isTriggered) return;
+    }
+
+    // Giao thức Tawa: In-chat history injection (position === 2)
+    if (mod.injection_position === 2) {
+      const resolvedContent = ContextCompressor.cleanText(replaceVariables(segmentContent));
+      if (resolvedContent.trim().length > 0) {
+        inChatSegments.push({
+          content: resolvedContent,
+          role: mod.role,
+          depth: mod.injection_depth || 0,
+          order: mod.injection_order || 100,
+          identifier: mod.identifier,
+        });
+      }
+      return; // Skip system-level segments
     }
 
     let segmentRole = mod.role;
@@ -1089,6 +1111,58 @@ TIME & ACTION DIRECTIVE:
     systemPrompt: finalSystemPrompt, 
     postHistoryUser: finalPostHistoryUser, 
     prefillAssistant: finalPrefillAssistant, 
-    fewShotBlock: finalFewShotBlock 
+    fewShotBlock: finalFewShotBlock,
+    inChatSegments
   };
 };
+
+export function buildPromptFromHistory(
+  preset: any,
+  history: any[],
+  activeWorld: any,
+  gameTime: any,
+  promptText: string,
+  settings: any
+): { prompt: string } {
+  // Use buildGameplaySystemPrompt to construct the base system prompt
+  const systemPromptData = buildGameplaySystemPrompt(
+    activeWorld?.world || {},
+    activeWorld?.player || {},
+    activeWorld?.entities || [],
+    activeWorld?.entities || [],
+    "", // relevantMemories
+    history ? Math.floor(history.length / 2) : 0,
+    preset || {},
+    activeWorld?.config || {},
+    settings,
+    gameTime,
+    promptText,
+    "", // summary
+    "", // tableData
+    undefined, // lorebook
+    history || []
+  );
+
+  let formattedHistory = "";
+  if (history && history.length > 0) {
+    formattedHistory = history
+      .filter((msg) => !msg.isHidden && msg.text)
+      .map((msg) => {
+        const name = msg.role === "user" ? (activeWorld?.player?.name || "User") : (activeWorld?.entities?.[0]?.name || "Character");
+        return `${name}: ${msg.text}`;
+      })
+      .join("\n\n");
+  }
+
+  const prompt = `${systemPromptData}
+
+=== Bối cảnh câu chuyện (Lịch sử hội thoại) ===
+${formattedHistory}
+
+=== Hành động / Lời thoại mới nhất ===
+${activeWorld?.player?.name || "User"}: ${promptText}
+`;
+
+  return { prompt };
+}
+

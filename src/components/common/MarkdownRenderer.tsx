@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { Terminal, Code, RotateCcw, Wrench } from 'lucide-react';
 import { RegexScript } from '../../types';
-import { getRegexedString } from '../../utils/regex';
+import { getRegexedString, safeUtf8ToBase64 } from '../../utils/regex';
 import { dbService } from '../../services/db/indexedDB';
 
 interface MarkdownRendererProps {
@@ -973,6 +973,15 @@ const IframeSandboxWidget = ({ contentAttr }: { contentAttr: string }) => {
             temp = temp.replace(/\bimport\s+["'][^"']*["'];?/g, '/* $& */');
           }
 
+          // Protect comments, string literals and template strings from being incorrectly transformed
+          const tokenRegex = /(\/\*[\s\S]*?\*\/)|(\/\/.*)|("(?:[^"\\]|\\.)*")|('(?:[^'\\]|\\.)*')|(`(?:[^`\\]|\\.)*`)/g;
+          const placeholders: string[] = [];
+          temp = temp.replace(tokenRegex, (match) => {
+            const placeholder = `__TAWA_PLACEHOLDER_${placeholders.length}__`;
+            placeholders.push(match);
+            return placeholder;
+          });
+
           // Replace const/let with var (excluding identifiers starting with const/let)
           temp = temp.replace(/(?:^|[^a-zA-Z0-9_$])\b(const|let)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g, (match, type) => {
             return match.replace(new RegExp(`\\b${type}\\b`), 'var');
@@ -981,6 +990,11 @@ const IframeSandboxWidget = ({ contentAttr }: { contentAttr: string }) => {
           temp = temp.replace(/(?:^|[^a-zA-Z0-9_$])\bclass\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g, (match, name) => {
             return match.replace(`class ${name}`, `var ${name} = class ${name}`);
           });
+
+          // Restore protected tokens
+          for (let i = 0; i < placeholders.length; i++) {
+            temp = temp.replace(`__TAWA_PLACEHOLDER_${i}__`, () => placeholders[i]);
+          }
           return open + temp + close;
         });
       }
@@ -2019,9 +2033,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           const isJs = lowerMatch.startsWith('```javascript') || lowerMatch.startsWith('```js') || lowerMatch.startsWith('```jsx') || lowerMatch.startsWith('```react') || lowerMatch.startsWith('```ts') || lowerMatch.startsWith('```typescript');
           const finalCode = isJs ? `<script type="text/babel" data-presets="react,typescript">\n${code}\n</script>` : code;
           try {
-            const base64 = typeof btoa !== 'undefined' 
-              ? btoa(unescape(encodeURIComponent(finalCode)))
-              : Buffer.from(finalCode).toString('base64');
+            const base64 = safeUtf8ToBase64(finalCode);
             return `<regex-widget data-content="${base64}"></regex-widget>`;
           } catch(e) {
             return match;
@@ -2030,9 +2042,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
         text = text.replace(preBlockRegex, (match, code) => {
           try {
-            const base64 = typeof btoa !== 'undefined' 
-              ? btoa(unescape(encodeURIComponent(code)))
-              : Buffer.from(code).toString('base64');
+            const base64 = safeUtf8ToBase64(code);
             return `<regex-widget data-content="${base64}"></regex-widget>`;
           } catch(e) {
             return match;
@@ -2050,9 +2060,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         text = text.replace(documentHtmlRegex, (match, htmlContent) => {
            if (/(<!DOCTYPE\s+html|<html|<body|<script|<style)/i.test(htmlContent)) {
                try {
-                 const base64 = typeof btoa !== 'undefined' 
-                   ? btoa(unescape(encodeURIComponent(htmlContent)))
-                   : Buffer.from(htmlContent).toString('base64');
+                 const base64 = safeUtf8ToBase64(htmlContent);
                  return `<document_content>\n<regex-widget data-content="${base64}"></regex-widget>\n</document_content>`;
                } catch(e) {
                  return match;
@@ -2067,9 +2075,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         text = text.replace(sandboxRegex, (match, content) => {
            console.log(`[MarkdownRenderer] Matched sandbox block of length ${content.length}`);
            try {
-             const base64 = typeof btoa !== 'undefined' 
-               ? btoa(unescape(encodeURIComponent(content)))
-               : Buffer.from(content).toString('base64');
+             const base64 = safeUtf8ToBase64(content);
              return `<regex-widget data-content="${base64}"></regex-widget>`;
            } catch(e) {
              console.error(`[MarkdownRenderer] Error converting sandbox block to base64:`, e);
@@ -2081,9 +2087,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         text = text.replace(fullDocRegex, (match) => {
           console.log(`[MarkdownRenderer] Matched full doc block of length ${match.length}`);
           try {
-            const base64 = typeof btoa !== 'undefined' 
-              ? btoa(unescape(encodeURIComponent(match)))
-              : Buffer.from(match).toString('base64');
+            const base64 = safeUtf8ToBase64(match);
             return `<regex-widget data-content="${base64}"></regex-widget>`;
           } catch(e) {
             console.error(`[MarkdownRenderer] Error converting fulldoc block to base64:`, e);
@@ -2094,9 +2098,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         // Thay thế các thẻ script cục bộ thành regex-widget để thực thi an toàn mà không làm hỏng markdown
         text = text.replace(nativeScriptRegex, (match) => {
           try {
-            const base64 = typeof btoa !== 'undefined' 
-              ? btoa(unescape(encodeURIComponent(match)))
-              : Buffer.from(match).toString('base64');
+            const base64 = safeUtf8ToBase64(match);
             return `<regex-widget data-content="${base64}"></regex-widget>`;
           } catch(e) {
             return match;
