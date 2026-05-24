@@ -427,8 +427,12 @@ ${code}
     </summary>
   ),
   // === /Regex HTML Elements Support ===
-  think: ({ children }) => <span className="hidden" aria-hidden="true">{children}</span>,
-  thinking: ({ children }) => <span className="hidden" aria-hidden="true">{children}</span>,
+  think: ({ children, ...props }: any) => <span {...sanitizeProps(props)}>{children}</span>,
+  thinking: ({ children, ...props }: any) => <span {...sanitizeProps(props)}>{children}</span>,
+  ai_guide: ({ children, ...props }: any) => <span {...sanitizeProps(props)}>{children}</span>,
+  ai_guides: ({ children, ...props }: any) => <span {...sanitizeProps(props)}>{children}</span>,
+  'ai-guide': ({ children, ...props }: any) => <span {...sanitizeProps(props)}>{children}</span>,
+  'ai-guides': ({ children, ...props }: any) => <span {...sanitizeProps(props)}>{children}</span>,
   content: ({ children, ...props }: any) => <div className="mb-4" {...sanitizeProps(props)}>{children}</div>,
   story: ({ children, ...props }: any) => <div className="mb-4" {...sanitizeProps(props)}>{children}</div>,
   branches: ({ children }) => <span className="hidden" aria-hidden="true">{children}</span>,
