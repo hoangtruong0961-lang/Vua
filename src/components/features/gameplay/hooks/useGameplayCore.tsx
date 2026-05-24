@@ -3596,14 +3596,19 @@ export const useGameplayCore = ({
         if (payload) {
           const wbName = payload.name || payload.worldbook || "Active Worldbook";
           const wbData = payload.data || payload.entries || payload;
-          tavernHelper.updateWorldbookWith(wbName, wbData);
+          const tHelper = (window as any).TavernHelper;
+          if (tHelper) {
+            tHelper.updateWorldbookWith(wbName, wbData);
+          } else {
+            console.warn("[SillyTavern Bridge] TavernHelper not initialized yet for UPDATE_WORLDBOOK");
+          }
         }
         break;
       case "TOAST":
         toast(payload?.message || payload);
         break;
     }
-  }, [onNavigate, setShowCharModal, setShowHistoryModal, setShowRegexModal, setShowContextModal, setShowImageLibrary, setShowLogConsole, onUpdateWorld, tavernHelper, handleSend, history, handleMessageUpdate]);
+  }, [onNavigate, setShowCharModal, setShowHistoryModal, setShowRegexModal, setShowContextModal, setShowImageLibrary, setShowLogConsole, onUpdateWorld, handleSend, history, handleMessageUpdate]);
 
   useEffect(() => {
     executeWidgetActionRef.current = executeWidgetAction;
